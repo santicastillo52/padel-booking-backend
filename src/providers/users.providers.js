@@ -51,16 +51,18 @@ const createUserInDB = async (userData) => {
  * Actualiza un usuario existente.
  * @param {number|string} userId - ID del usuario a actualizar.
  * @param {Object} userData - Datos para actualizar.
+ * @param {Object} [transaction=null] - Transacción de Sequelize (opcional).
  * @returns {Promise<Object>} - Usuario actualizado.
  * @throws {Error} - Si el usuario no existe.
  */
 
-const updateUserInDB = async (userId, userData) => {
-  const user = await User.findByPk(userId);
+const updateUserInDB = async (userId, userData, transaction = null) => {
+  const options = transaction ? { transaction } : {};
+  const user = await User.findByPk(userId, options);
   if (!user) {
     throw new Error("User not found");
   }
-  return await user.update(userData);
+  return await user.update(userData, options);
 };
 
 module.exports = {
