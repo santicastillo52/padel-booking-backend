@@ -1,4 +1,5 @@
 const clubProvider = require("../providers/clubs.providers");
+const userProvider = require("../providers/users.providers");
 const imageService = require("./images.services");
 const fs = require('fs').promises;
 const path = require('path');
@@ -88,6 +89,9 @@ const createClub = async (clubData, file) => {
 
     // Crear club en BD con transacción
     const newClub = await clubProvider.createClubInDB(clubData, t);
+
+    // Actualizar rol del usuario creador a admin (dentro de la misma transacción)
+    await userProvider.updateUserInDB(userId, { role: 'admin' }, t);
 
     // Guardar archivo físico
     await fs.writeFile(filePath, file.buffer);
