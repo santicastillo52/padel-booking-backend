@@ -177,7 +177,7 @@ const deleteCourtFromDb = async (courtId) => {
   if(!courtToDelete){
     throw new Error (`No se encontró el cancha con ID: ${courtId}`)
   }
-  await Court.destroy({where: {id: courtId}})
+  await courtToDelete.destroy();
   return courtToDelete;
 }
 

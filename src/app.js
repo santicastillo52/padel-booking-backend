@@ -8,7 +8,6 @@ const courtSchedulesRoutes = require('./routes/courtsSchedules.routes.js');
 const courtsRoutes = require('./routes/courts.routes.js');
 const imagesRoutes = require('./routes/images.routes.js'); 
 const loginRoutes = require('./routes/auth.routes.js');
-const path = require('path');
 const passport = require('passport');
 const swaggerUI = require('swagger-ui-express');
 const specs = require('./config/swagger.js');
@@ -26,7 +25,6 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 }));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api-docs',swaggerUI.serve, swaggerUI.setup(specs));
 
 // Rutas

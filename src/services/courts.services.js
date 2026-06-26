@@ -3,8 +3,6 @@ const imageService = require("./images.services");
 const courtHelpers = require("../utils/courtHelpers");
 const {DateTime} = require("luxon");
 const { sequelize, Court } = require("../models");
-const fs = require('fs').promises;
-const path = require('path');
 
 const fetchAllCourts = async (filters) => {
   return await courtsProvider.getCourtsFromDB(filters);
@@ -133,17 +131,15 @@ const fetchCourtById = async (courtId) => {
 
 const addNewCourts = async (courtList, files, userId) => {
   const t = await sequelize.transaction();
-  let uploadedFilePaths = [];
+  const uploadedPublicIds = [];
 
   try {
     const createdCourts = [];
 
     for (let i = 0; i < courtList.length; i++) {
       const courtData = courtList[i];
-      const file = files[i]; // Obtener el archivo correspondiente
-      
-      // La verificación de propiedad del club ya se hizo en el middleware
-      
+      const file = files[i];
+
       const existingCourt = await Court.findOne({
         where: {
           name: courtData.name,
@@ -158,38 +154,29 @@ const addNewCourts = async (courtList, files, userId) => {
         );
       }
       const court = await courtsProvider.createCourtInDB(courtData, t);
-      
+
       if (file) {
-        // Subir archivo solo si la transacción es exitosa
-        const filename = `${Date.now()}_${file.originalname}`;
-        const filePath = path.join(__dirname, '../../uploads', filename);
-        
-        await fs.writeFile(filePath, file.buffer);
-        uploadedFilePaths.push(filePath);
-        
-        const mockReq = {
-          file: { filename },
+        const newImage = await imageService.handleUpload({
+          file,
           type: 'court',
-          courtId: court.id
-        };
-        await imageService.handleUpload(mockReq, t);
+          courtId: court.id,
+        }, t);
+
+        if (newImage.cloudinaryPublicId) {
+          uploadedPublicIds.push(newImage.cloudinaryPublicId);
+        }
       }
-    
+
       createdCourts.push(court);
     }
 
     await t.commit();
     return createdCourts;
   } catch (error) {
-    // Si hay error, eliminar los archivos si se subieron
-    for (const filePath of uploadedFilePaths) {
-      try {
-        await fs.unlink(filePath);
-      } catch (unlinkError) {
-        console.error('Error deleting uploaded file:', unlinkError);
-      }
+    for (const publicId of uploadedPublicIds) {
+      await imageService.deleteFromCloudinary(publicId);
     }
-    
+
     await t.rollback();
     throw error;
   }

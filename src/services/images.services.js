@@ -1,8 +1,51 @@
 const imageProvider = require("../providers/images.providers");
 const courtProvider = require("../providers/courts.providers");
 const clubProvider = require("../providers/clubs.providers");
-const fs = require("fs").promises;
-const path = require("path");
+const cloudinary = require("../config/cloudinary");
+
+const CLOUDINARY_FOLDERS = {
+  club: "padel/clubs",
+  court: "padel/courts",
+};
+
+/**
+ * Sube un archivo buffer de Multer a Cloudinary
+ * @param {Object} file - Archivo Multer con buffer
+ * @param {string} folder - Carpeta destino en Cloudinary
+ * @returns {Promise<{ secure_url: string, public_id: string }>}
+ */
+const uploadToCloudinary = (file, folder) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: "image" },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({
+          secure_url: result.secure_url,
+          public_id: result.public_id,
+        });
+      }
+    );
+    stream.end(file.buffer);
+  });
+};
+
+/**
+ * Elimina un asset de Cloudinary por su public_id
+ * @param {string} publicId - public_id del asset en Cloudinary
+ * @returns {Promise<void>}
+ */
+const deleteFromCloudinary = async (publicId) => {
+  if (!publicId) return;
+  try {
+    await cloudinary.uploader.destroy(publicId);
+  } catch (error) {
+    console.warn(
+      `No se pudo eliminar asset de Cloudinary (${publicId}):`,
+      error.message
+    );
+  }
+};
 
 /**
  * Obtiene todas las imágenes de la base de datos
@@ -35,61 +78,51 @@ const handleUpdate = async (imageData, imageId) => {
 };
 
 /**
- * Actualiza una imagen existente con un nuevo archivo
+ * Actualiza una imagen existente con un nuevo archivo en Cloudinary
  * @param {number} imageId - ID de la imagen a actualizar
- * @param {Object} file - Nuevo archivo de imagen
+ * @param {Object} file - Nuevo archivo de imagen (Multer)
  * @returns {Promise<Object>} - Imagen actualizada
  * @throws {Error} - Si la imagen no existe o ocurre un error al actualizar
  */
 const handleImageUpdate = async (imageId, file) => {
-  const fs = require("fs").promises;
-  const path = require("path");
-
-  // Verificar que la imagen existe
   const existingImage = await imageProvider.getImageByIdFromDB(imageId);
   if (!existingImage) {
     throw new Error(`La imagen con id ${imageId} no existe`);
   }
 
-  // Validar el nuevo archivo
   if (!file) {
     throw new Error("No se ha proporcionado ningún archivo");
   }
 
-  // Eliminar archivo físico anterior
-  const oldFilePath = path.join(
-    __dirname,
-    "../../uploads",
-    existingImage.url.split("/").pop()
-  );
+  const folder = CLOUDINARY_FOLDERS[existingImage.type];
+  let uploadResult;
+
   try {
-    await fs.unlink(oldFilePath);
+    uploadResult = await uploadToCloudinary(file, folder);
+
+    await imageProvider.updateImage({
+      id: imageId,
+      url: uploadResult.secure_url,
+      cloudinaryPublicId: uploadResult.public_id,
+    });
+
+    if (existingImage.cloudinaryPublicId) {
+      await deleteFromCloudinary(existingImage.cloudinaryPublicId);
+    }
+
+    return await imageProvider.getImageByIdFromDB(imageId);
   } catch (error) {
-    console.error("Error eliminando archivo anterior:", error);
+    if (uploadResult?.public_id) {
+      await deleteFromCloudinary(uploadResult.public_id);
+    }
+    throw error;
   }
-
-  // Subir nuevo archivo
-  const filename = `${Date.now()}_${file.originalname}`;
-  const newFilePath = path.join(__dirname, "../../uploads", filename);
-  await fs.writeFile(newFilePath, file.buffer);
-
-  // Actualizar registro en BD
-  const updatedImageData = {
-    id: imageId,
-    url: `/uploads/${filename}`,
-  };
-
-  await imageProvider.updateImage(updatedImageData);
-
-  // Retornar imagen actualizada
-  return await imageProvider.getImageByIdFromDB(imageId);
 };
 
 /**
- * Sube una nueva imagen y la asocia a una entidad (cancha o club)
+ * Sube una nueva imagen a Cloudinary y la asocia a una entidad (cancha o club)
  * @param {Object} courtData - Datos de la imagen y entidad
- * @param {Object} courtData.file - Archivo de imagen
- * @param {string} courtData.file.filename - Nombre del archivo
+ * @param {Object} courtData.file - Archivo Multer con buffer
  * @param {string} courtData.type - Tipo de entidad ('court' o 'club')
  * @param {number} [courtData.courtId] - ID de la cancha (requerido si type es 'court')
  * @param {number} [courtData.clubId] - ID del club (requerido si type es 'club')
@@ -100,7 +133,6 @@ const handleImageUpdate = async (imageId, file) => {
 const handleUpload = async (courtData, transaction) => {
   const { type, courtId, clubId } = courtData;
 
-  // Validaciones básicas
   if (!courtData.file) {
     throw new Error("No se ha proporcionado ningún archivo");
   }
@@ -109,7 +141,6 @@ const handleUpload = async (courtData, transaction) => {
     throw new Error('El tipo debe ser "court" o "club"');
   }
 
-  // Validación de pertenencia exclusiva
   if (type === "court") {
     if (!courtId) {
       throw new Error("CourtId es requerido para imágenes de cancha");
@@ -128,7 +159,6 @@ const handleUpload = async (courtData, transaction) => {
     }
   }
 
-  // Verificar que la entidad existe
   if (type === "court") {
     const courtExists = await courtProvider.getCourtByIdFromDB(
       courtId,
@@ -146,117 +176,28 @@ const handleUpload = async (courtData, transaction) => {
     }
   }
 
-  const imageData = {
-    url: `/uploads/${courtData.file.filename}`,
-    type,
-    CourtId: type === "court" ? courtId : null,
-    ClubId: type === "club" ? clubId : null,
-  };
+  const folder = CLOUDINARY_FOLDERS[type];
+  let uploadResult;
 
-  const newImage = await imageProvider.createImage(imageData, { transaction });
-  return newImage;
-};
-
-
-//De aca para abajo funciones para Eliminar imagenes huerfanas
-const startAutomaticImagesCleaner = () =>{
-  console.log('🚀 Iniciando servicio automático de limpieza de imagenes (cada una semana)');
-
-  //Llamar a la funcion apenas inicia el sv
-  cleanupUnusedImages()
-
-  //Llama a la funcion cada una semana
-  setInterval(cleanupUnusedImages, 7 * 24 * 60 * 60 * 1000);
-}
-
-const getPhysicalImagesSimple = async () => {
   try {
-    const uploadsPath = path.join(__dirname, "../../uploads");
-    const files = await fs.readdir(uploadsPath);
+    uploadResult = await uploadToCloudinary(courtData.file, folder);
 
-    return files.map((filename) => ({
-      img_url: `/uploads/${filename}`,
-    }));
+    const imageData = {
+      url: uploadResult.secure_url,
+      cloudinaryPublicId: uploadResult.public_id,
+      type,
+      CourtId: type === "court" ? courtId : null,
+      ClubId: type === "club" ? clubId : null,
+    };
+
+    const newImage = await imageProvider.createImage(imageData, { transaction });
+    return newImage;
   } catch (error) {
-    console.error("Error leyendo directorio uploads:", error);
-    return [];
-  }
-};
-
-const cleanupUnusedImages = async () => {
-  try {
-    //  Obtener imágenes físicas del directorio uploads
-    const physicalImages = await getPhysicalImagesSimple();
-
-    // Obtener imágenes de la base de datos
-    let dbImages = await fetchAllImages();
-
-    //Creamos un nuevo array con al respuesta de la DB
-    dbImages = dbImages.map((img) => ({
-      img_url: img.dataValues.url,
-    }));
-
-    //  Usarfunción para encontrar imágenes a eliminar
-    const imagesToDelete = deleteImages(physicalImages, dbImages);
-
-    if (imagesToDelete.length === 0) {
-      console.log("No hay imágenes para eliminar");
-      return { message: "No hay imágenes para eliminar" };
+    if (uploadResult?.public_id) {
+      await deleteFromCloudinary(uploadResult.public_id);
     }
-
-    //  Eliminar físicamente los archivos
-
-    const result = await deletePhysicalImages(imagesToDelete);
-
-    console.log(`Eliminadas ${result.deletedImages.length} imágenes`);
-    if (result.errors.length > 0) {
-      console.log(`Errores en ${result.errors.length} imágenes`);
-    }
-
-    return result;
-  } catch (error) {
-    console.error("Error en limpieza de imágenes:", error);
     throw error;
   }
-};
-
-const deleteImages =  (physicalImages, dbImages) => {
-  let imagesToDelete = [];
-
-  physicalImages.map((image) => {
-    let existing = dbImages.some(
-      (imageDB) => imageDB.img_url === image.img_url
-    );
-
-    if (!existing) {
-      imagesToDelete.push(image);
-    }
-  });
-  return imagesToDelete;
-};
-
-const deletePhysicalImages = async (imagesToDelete) => {
-  const deletedImages = [];
-  const errors = [];
-
-  for (const image of imagesToDelete) {
-    try {
-      // Extraer solo el nombre del archivo de la URL
-      const imageUrl = image.img_url;
-      const filename = imageUrl.split("/").pop();
-      const filePath = path.join(__dirname, "../../uploads", filename);
-
-      // Eliminar el archivo físico
-      await fs.unlink(filePath);
-      deletedImages.push(imageUrl);
-      console.log(`Imagen eliminada: ${filename}`);
-    } catch (error) {
-      console.error(`Error eliminando ${imageUrl}:`, error.message);
-      errors.push({ imageUrl, error: error.message });
-    }
-  }
-
-  return { deletedImages, errors };
 };
 
 module.exports = {
@@ -264,5 +205,5 @@ module.exports = {
   handleUpload,
   handleUpdate,
   handleImageUpdate,
-  startAutomaticImagesCleaner
+  deleteFromCloudinary,
 };

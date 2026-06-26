@@ -32,6 +32,30 @@ module.exports = (sequelize, DataTypes) => {
     });
   };
 
+  Club.addHook('beforeDestroy', async (club) => {
+    const { Image, Court } = club.sequelize.models;
+
+    const courts = await Court.findAll({
+      where: { clubId: club.id },
+      attributes: ['id'],
+    });
+    const courtIds = courts.map((court) => court.id);
+
+    if (courtIds.length > 0) {
+      const courtImages = await Image.findAll({
+        where: { CourtId: courtIds },
+      });
+      for (const image of courtImages) {
+        await image.destroy();
+      }
+    }
+
+    const clubImages = await Image.findAll({ where: { ClubId: club.id } });
+    for (const image of clubImages) {
+      await image.destroy();
+    }
+  });
+
   return Club;
 };
 
