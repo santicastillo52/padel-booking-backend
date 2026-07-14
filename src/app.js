@@ -21,7 +21,7 @@ const app = express();
 app.use(express.json());
 app.use(passport.initialize());
 app.use(cors({
-  origin: 'http://localhost:4200',
+  origin: 'https://padel-booking-frontend-navy.vercel.app/',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 }));
