@@ -54,7 +54,10 @@ const updateImage = async (imageData) => {
  * @throws {Error} - Si ocurre un error al eliminar la imagen
  */
 const deleteImage = async (imageId) => {
-  return await Image.destroy({ where: { id: imageId } });
+  const image = await Image.findByPk(imageId);
+  if (!image) return 0;
+  await image.destroy();
+  return 1;
 };
 
 module.exports = { 

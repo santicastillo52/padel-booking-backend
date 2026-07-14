@@ -40,6 +40,14 @@ module.exports = (sequelize, DataTypes) => {
     });
   };
 
+  Court.addHook('beforeDestroy', async (court) => {
+    const { Image } = court.sequelize.models;
+    const images = await Image.findAll({ where: { CourtId: court.id } });
+    for (const image of images) {
+      await image.destroy();
+    }
+  });
+
   return Court;
 }
 
