@@ -2,6 +2,14 @@
 
 API REST para la gestión de clubes de pádel, canchas, horarios y reservas. Pensada para integrarse con un frontend (por defecto Angular en `http://localhost:4200`).
 
+### Deploys
+
+| Entorno | URL |
+|---------|-----|
+| **Backend (API)** | [https://padel-booking-backend.onrender.com/](https://padel-booking-backend.onrender.com/) |
+| **Frontend** | [https://padel-booking-frontend-navy.vercel.app/](https://padel-booking-frontend-navy.vercel.app/) |
+| **Swagger (producción)** | [https://padel-booking-backend.onrender.com/api-docs](https://padel-booking-backend.onrender.com/api-docs) |
+
 ---
 
 ## Tabla de contenidos
@@ -19,7 +27,7 @@ API REST para la gestión de clubes de pádel, canchas, horarios y reservas. Pen
 11. [Modelo de datos](#modelo-de-datos)
 12. [API — Endpoints](#api--endpoints)
 13. [Tareas en segundo plano](#tareas-en-segundo-plano)
-14. [Subida de archivos](#subida-de-archivos)
+14. [Imágenes y Cloudinary](#imágenes-y-cloudinary)
 15. [Estructura de carpetas](#estructura-de-carpetas)
 16. [Convenciones y buenas prácticas](#convenciones-y-buenas-prácticas)
 
@@ -33,8 +41,8 @@ El backend permite:
 - **Gestión de clubes** (datos, imágenes) por propietarios (`admin`).
 - **Gestión de canchas** y sus **horarios semanales** (`CourtSchedule`).
 - **Reservas** (`Booking`) vinculadas a cancha, horario, fecha y club.
-- **Imágenes** asociadas a clubes o canchas, servidas desde `/uploads`.
-- **Actualización automática** del estado de reservas finalizadas y **limpieza** de imágenes huérfanas en disco.
+- **Imágenes** asociadas a clubes o canchas, alojadas en **Cloudinary** (URL pública + `public_id`).
+- **Actualización automática** del estado de reservas finalizadas.
 
 Los roles principales son:
 
@@ -57,7 +65,8 @@ Los roles principales son:
 | **jsonwebtoken** | Tokens JWT (expiración: 2 horas) |
 | **bcrypt** | Hash de contraseñas |
 | **Joi** | Validación de entrada en middleware |
-| **Multer** | Subida de imágenes (memoria o disco) |
+| **Multer** | Recepción de imágenes en memoria (`multipart/form-data`) |
+| **Cloudinary** | Almacenamiento, entrega y borrado de imágenes en la nube |
 | **Swagger (swagger-jsdoc + swagger-ui-express)** | Documentación OpenAPI |
 | **express-rate-limit** | Límite de intentos de login |
 | **Luxon** | Fechas/horas para jobs y reservas |
@@ -88,7 +97,7 @@ El punto de entrada es `index.js`, que autentica la conexión a PostgreSQL, arra
 - **Node.js** 18+ (recomendado LTS)
 - **npm**
 - Instancia de **PostgreSQL** accesible (local o en la nube; la configuración actual usa **SSL**)
-- Carpeta `uploads/` en la raíz del proyecto (para archivos estáticos de imágenes)
+- Cuenta de **Cloudinary** con cloud name, API key y API secret
 
 ---
 
@@ -128,6 +137,9 @@ Crear un archivo `.env` en la raíz (está en `.gitignore`). Variables utilizada
 | `JWT_SECRET` | Recomendada | Secreto para firmar JWT. Si no se define, se usa un valor por defecto **no seguro para producción**. |
 | `PORT` | No | Puerto del servidor (default: `3000`) |
 | `API_URL` | No | URL base para Swagger (default: `http://localhost:3000`) |
+| `CLOUDINARY_CLOUD_NAME` | Sí (imágenes) | Cloud name de la cuenta Cloudinary |
+| `CLOUDINARY_API_KEY` | Sí (imágenes) | API key de Cloudinary |
+| `CLOUDINARY_API_SECRET` | Sí (imágenes) | API secret de Cloudinary |
 
 **Ejemplo de `.env`:**
 
@@ -136,6 +148,9 @@ DATABASE_URL=postgres://usuario:password@localhost:5432/padel_booking
 JWT_SECRET=tu_secreto_largo_y_aleatorio
 PORT=3000
 API_URL=http://localhost:3000
+CLOUDINARY_CLOUD_NAME=tu_cloud_name
+CLOUDINARY_API_KEY=tu_api_key
+CLOUDINARY_API_SECRET=tu_api_secret
 ```
 
 > La conexión en `src/config/database.js` y `config/config.js` exige SSL (`rejectUnauthorized: false`), típico de proveedores como Railway, Render o Supabase.
@@ -144,7 +159,7 @@ API_URL=http://localhost:3000
 
 ## Base de datos y migraciones
 
-Las migraciones están en `migrations/` y crean, en orden:
+Las migraciones están en `migrations/` y crean/actualizan, en orden:
 
 1. `Users`
 2. `Clubs`
@@ -152,6 +167,8 @@ Las migraciones están en `migrations/` y crean, en orden:
 4. `CourtSchedules`
 5. `Bookings`
 6. `Images`
+7. Columna `cloudinaryPublicId` en `Images`
+8. Ajuste de FKs de `Images` con `ON DELETE CASCADE`
 
 **Comandos útiles (sequelize-cli):**
 
@@ -183,10 +200,11 @@ Al iniciar correctamente verás en consola:
 
 - Confirmación de conexión a la base de datos.
 - Inicio del job de estados de horarios (cada 30 minutos).
-- Inicio del job de limpieza de imágenes (cada semana).
 - Mensaje con el puerto en escucha.
 
 **Health check simple:** `GET /` → respuesta `Hello World!`
+
+En producción: [https://padel-booking-backend.onrender.com/](https://padel-booking-backend.onrender.com/)
 
 ---
 
@@ -194,7 +212,8 @@ Al iniciar correctamente verás en consola:
 
 Con el servidor en marcha:
 
-**URL:** [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
+- **Local:** [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
+- **Producción:** [https://padel-booking-backend.onrender.com/api-docs](https://padel-booking-backend.onrender.com/api-docs)
 
 La especificación OpenAPI se genera desde comentarios `@swagger` en `src/routes/*.js`. El servidor documentado usa `API_URL` o `http://localhost:3000`.
 
@@ -322,17 +341,20 @@ Al crear una reserva, el horario pasa a `booked`. Un job periódico marca reserv
 
 #### Image (`Images`)
 
-| Campo | Tipo |
-|-------|------|
-| `url` | STRING (ruta bajo `/uploads/...`) |
-| `type` | `court` \| `club` |
-| `CourtId`, `ClubId` | INTEGER (según tipo) |
+| Campo | Tipo | Notas |
+|-------|------|--------|
+| `url` | STRING | URL segura de Cloudinary (`secure_url`) |
+| `cloudinaryPublicId` | STRING | `public_id` del asset en Cloudinary (para borrar/actualizar) |
+| `type` | `court` \| `club` | |
+| `CourtId`, `ClubId` | INTEGER | Según tipo (nullable) |
+
+Al eliminar una imagen (o su club/cancha), un hook `beforeDestroy` intenta borrar también el asset en Cloudinary.
 
 ---
 
 ## API — Endpoints
 
-Prefijo base: raíz del servidor (ej. `http://localhost:3000`).
+Prefijo base: raíz del servidor (ej. `http://localhost:3000` o [producción](https://padel-booking-backend.onrender.com/)).
 
 ### Auth — `/auth`
 
@@ -429,7 +451,7 @@ Estados válidos: `pending`, `confirmed`, `cancelled`, `completed`.
 | GET | `/images` | No | Listar todas las imágenes |
 | PATCH | `/images/:id` | JWT + ownership | Actualizar imagen (`multipart/form-data`: `image`, `type`, `clubId`/`courtId`) |
 
-Archivos estáticos: `GET /uploads/<nombre_archivo>`.
+Las URLs de las imágenes apuntan a Cloudinary (CDN); no se sirven desde el propio servidor.
 
 ### CORS
 
@@ -438,7 +460,7 @@ Configurado en `src/app.js` para:
 - **Origen:** `http://localhost:4200`
 - **Métodos:** GET, POST, PUT, PATCH, DELETE
 
-Para otro frontend, ajustar el `origin` en ese archivo o externalizarlo a variable de entorno.
+Para otro frontend (por ejemplo el deploy en Vercel), ajustar el `origin` en ese archivo o externalizarlo a variable de entorno.
 
 ---
 
@@ -446,24 +468,36 @@ Para otro frontend, ajustar el `origin` en ese archivo o externalizarlo a variab
 
 Definidas en `index.js` al arrancar el servidor:
 
-### 1. Actualización de estados de reservas (`courtScheduleStatus.service.js`)
+### Actualización de estados de reservas (`courtScheduleStatus.service.js`)
 
 - **Frecuencia:** cada **30 minutos** (y una ejecución al inicio).
 - **Acción:** busca reservas cuya fecha/hora de fin ya pasó; pone el `CourtSchedule` en `available` y el `Booking` en `completed`.
 
-### 2. Limpieza de imágenes huérfanas (`images.services.js`)
-
-- **Frecuencia:** cada **7 días** (y una ejecución al inicio).
-- **Acción:** compara archivos en `uploads/` con URLs registradas en BD; elimina del disco los que no tienen registro.
-
 ---
 
-## Subida de archivos
+## Imágenes y Cloudinary
 
-- Configuración: `src/config/multer.js`.
-- Rutas que aceptan archivos usan **`uploadMemory`** (buffer en memoria); el servicio escribe en `uploads/` con nombre `timestamp_originalname`.
-- Tipos de imagen en BD: `court` o `club`, asociados por `CourtId` o `ClubId`.
-- Las URLs guardadas tienen forma `/uploads/<archivo>` y se sirven como estáticos bajo el mismo path.
+Las imágenes **no se guardan en disco local**. El flujo es:
+
+1. **Multer** (`uploadMemory`) recibe el archivo en memoria (`multipart/form-data`).
+2. El servicio (`src/services/images.services.js`) sube el buffer a **Cloudinary** con `upload_stream`.
+3. En BD se guardan `url` (`secure_url`) y `cloudinaryPublicId` (`public_id`).
+4. Al actualizar o eliminar, se borra el asset anterior en Cloudinary (y hooks en Club/Court/Image cubren el borrado en cascada).
+
+### Configuración
+
+- Cliente: `src/config/cloudinary.js` (usa las variables `CLOUDINARY_*`).
+- Carpetas en Cloudinary:
+  - Clubes → `padel/clubs`
+  - Canchas → `padel/courts`
+
+### Rutas que suben imágenes
+
+- `POST /clubs` — imágenes del club
+- `POST /courts` — imágenes opcionales de canchas
+- `PATCH /images/:id` — reemplazo de una imagen existente
+
+Si la subida a Cloudinary falla o falla la persistencia en BD, el servicio intenta limpiar el asset recién creado para no dejar basura en la nube.
 
 ---
 
@@ -474,14 +508,14 @@ Padel-Booking-Backend/
 ├── config/
 │   └── config.js              # Config Sequelize CLI
 ├── migrations/                # Migraciones de BD
-├── uploads/                   # Imágenes subidas (no versionar datos sensibles)
 ├── index.js                   # Entrada: BD + jobs + listen
 ├── package.json
 └── src/
     ├── app.js                 # Express, CORS, rutas, Swagger
     ├── config/
+    │   ├── cloudinary.js      # Cliente Cloudinary
     │   ├── database.js
-    │   ├── multer.js
+    │   ├── multer.js          # Memoria (y disco legacy no usado en el flujo actual)
     │   ├── passport.js
     │   └── swagger.js
     ├── controllers/
@@ -501,8 +535,8 @@ Padel-Booking-Backend/
 - Cada función exportada debe documentarse con **bloque JSDoc** (convención del repositorio).
 - Validación de entrada centralizada con **Joi** (`validatorJoiMdw.js`).
 - Respuestas de error suelen incluir `message` y, en muchos casos, `error` con código simbólico (`FORBIDDEN_ACCESS`, `EMAIL_DUPLICATE`, etc.).
-- No commitear `.env` ni secretos reales.
-- En **producción**: definir `JWT_SECRET` fuerte, revisar CORS, usar HTTPS delante del API y considerar almacenamiento de imágenes en object storage si escala el tráfico.
+- No commitear `.env` ni secretos reales (`JWT_SECRET`, `CLOUDINARY_API_SECRET`, etc.).
+- En **producción**: definir `JWT_SECRET` fuerte, revisar CORS (incluir el origen del frontend en Vercel) y mantener las credenciales de Cloudinary solo en variables de entorno del host (Render).
 
 ---
 
@@ -524,4 +558,4 @@ ISC (según `package.json`).
 
 ## Soporte y ampliación
 
-Para detalle de parámetros, cuerpos y respuestas de cada endpoint, usar **Swagger** en `/api-docs`. Para cambios en el esquema de BD, crear nuevas migraciones con `sequelize-cli` y mantener modelos en `src/models/` alineados con las tablas.
+Para detalle de parámetros, cuerpos y respuestas de cada endpoint, usar **Swagger** en `/api-docs` (local o [producción](https://padel-booking-backend.onrender.com/api-docs)). Para cambios en el esquema de BD, crear nuevas migraciones con `sequelize-cli` y mantener modelos en `src/models/` alineados con las tablas.
