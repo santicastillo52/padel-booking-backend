@@ -10,7 +10,7 @@ const router = express.Router();
 
 /**
  * @swagger
- * /courts-schedules:
+ * /schedules:
  *   get:
  *     tags: [CourtsSchedules]
  *     summary: Listar todos los horarios disponibles
@@ -24,7 +24,7 @@ router.get('/', courtsSchedulesController.getAllCourtsSchedules);
 
 /**
  * @swagger
- * /courts-schedules/{id}:
+ * /schedules/{id}:
  *   post:
  *     tags: [CourtsSchedules]
  *     summary: Crear horarios para una cancha específica
@@ -68,7 +68,7 @@ router.post('/:id', JWTmiddleware, validator(courtId, "params"), validator(sched
 
 /**
  * @swagger
- * /courts-schedules/{id}:
+ * /schedules/{id}:
  *   delete:
  *     tags: [CourtsSchedules]
  *     summary: Eliminar un horario de cancha

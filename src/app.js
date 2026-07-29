@@ -15,15 +15,12 @@ require('./config/passport')(passport);
 
 const app = express();
 
-// meter en .env los url del back
-
 // Middleware
 app.use(express.json());
 app.use(passport.initialize());
 app.use(cors({
   origin: 'https://padel-booking-frontend-navy.vercel.app',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-
 }));
 app.use('/api-docs',swaggerUI.serve, swaggerUI.setup(specs));
 
