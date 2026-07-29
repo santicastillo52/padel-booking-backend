@@ -1,6 +1,6 @@
 # Padel Booking — Backend API
 
-API REST para la gestión de clubes de pádel, canchas, horarios y reservas. Pensada para integrarse con un frontend (por defecto Angular en `http://localhost:4200`).
+API REST para gestionar clubes de pádel, canchas, horarios y reservas. Pensada para integrarse con el frontend Angular.
 
 ### Deploys
 
@@ -8,554 +8,175 @@ API REST para la gestión de clubes de pádel, canchas, horarios y reservas. Pen
 |---------|-----|
 | **Backend (API)** | [https://padel-booking-backend.onrender.com/](https://padel-booking-backend.onrender.com/) |
 | **Frontend** | [https://padel-booking-frontend-navy.vercel.app/](https://padel-booking-frontend-navy.vercel.app/) |
-| **Swagger (producción)** | [https://padel-booking-backend.onrender.com/api-docs](https://padel-booking-backend.onrender.com/api-docs) |
+| **Swagger** | [https://padel-booking-backend.onrender.com/api-docs](https://padel-booking-backend.onrender.com/api-docs) |
+
+> En Render (plan free) la primera request puede tardar si el servicio estaba dormido.
 
 ---
 
-## Tabla de contenidos
+## Qué hace
 
-1. [Descripción general](#descripción-general)
-2. [Stack tecnológico](#stack-tecnológico)
-3. [Arquitectura del proyecto](#arquitectura-del-proyecto)
-4. [Requisitos previos](#requisitos-previos)
-5. [Instalación y configuración](#instalación-y-configuración)
-6. [Variables de entorno](#variables-de-entorno)
-7. [Base de datos y migraciones](#base-de-datos-y-migraciones)
-8. [Ejecución del servidor](#ejecución-del-servidor)
-9. [Documentación interactiva (Swagger)](#documentación-interactiva-swagger)
-10. [Autenticación y autorización](#autenticación-y-autorización)
-11. [Modelo de datos](#modelo-de-datos)
-12. [API — Endpoints](#api--endpoints)
-13. [Tareas en segundo plano](#tareas-en-segundo-plano)
-14. [Imágenes y Cloudinary](#imágenes-y-cloudinary)
-15. [Estructura de carpetas](#estructura-de-carpetas)
-16. [Convenciones y buenas prácticas](#convenciones-y-buenas-prácticas)
+- Registro e inicio de sesión con **JWT** (expira en 2 h).
+- Gestión de **clubes**, **canchas** y **horarios semanales**.
+- **Reservas** vinculadas a cancha, horario, fecha y club.
+- **Imágenes** en Cloudinary (URL + `public_id`).
+- Job periódico que marca reservas finalizadas como `completed` y libera el horario.
+
+| Rol | Quién | Qué puede hacer |
+|-----|--------|-----------------|
+| `client` | Jugador (default al registrarse) | Reservar, ver/cancelar sus reservas, editar su perfil |
+| `admin` | Dueño de club | Gestionar canchas, horarios, imágenes y reservas de su club |
 
 ---
 
-## Descripción general
-
-El backend permite:
-
-- **Registro e inicio de sesión** de usuarios con JWT.
-- **Gestión de clubes** (datos, imágenes) por propietarios (`admin`).
-- **Gestión de canchas** y sus **horarios semanales** (`CourtSchedule`).
-- **Reservas** (`Booking`) vinculadas a cancha, horario, fecha y club.
-- **Imágenes** asociadas a clubes o canchas, alojadas en **Cloudinary** (URL pública + `public_id`).
-- **Actualización automática** del estado de reservas finalizadas.
-
-Los roles principales son:
-
-| Rol     | Descripción |
-|---------|-------------|
-| `client` | Jugador que reserva canchas. Valor por defecto al registrarse. |
-| `admin`  | Propietario de un club. Gestiona club, canchas, horarios y ve reservas de su club. |
-
----
-
-## Stack tecnológico
+## Stack
 
 | Tecnología | Uso |
 |------------|-----|
-| **Node.js** | Runtime |
-| **Express 5** | Servidor HTTP y enrutamiento |
-| **PostgreSQL** | Base de datos |
-| **Sequelize 6** | ORM y migraciones (`sequelize-cli`) |
-| **Passport** (Local) | Validación de credenciales en login |
-| **jsonwebtoken** | Tokens JWT (expiración: 2 horas) |
-| **bcrypt** | Hash de contraseñas |
-| **Joi** | Validación de entrada en middleware |
-| **Multer** | Recepción de imágenes en memoria (`multipart/form-data`) |
-| **Cloudinary** | Almacenamiento, entrega y borrado de imágenes en la nube |
-| **Swagger (swagger-jsdoc + swagger-ui-express)** | Documentación OpenAPI |
-| **express-rate-limit** | Límite de intentos de login |
-| **Luxon** | Fechas/horas para jobs y reservas |
-| **CORS** | Origen permitido: frontend en puerto 4200 |
+| Node.js + Express 5 | API HTTP |
+| PostgreSQL + Sequelize 6 | Persistencia y migraciones |
+| Passport + JWT + bcrypt | Auth |
+| Joi | Validación de entrada |
+| Multer + Cloudinary | Subida y hosting de imágenes |
+| Swagger | Documentación OpenAPI |
+| Luxon | Fechas/horas del job de reservas |
+| express-rate-limit | Límite de intentos de login |
 
 ---
 
-## Arquitectura del proyecto
-
-El código sigue una separación por capas:
+## Arquitectura
 
 ```
-Petición HTTP
-    → routes/        (rutas + anotaciones Swagger)
-    → middlewares/   (JWT, permisos, Joi, rate limit)
-    → controllers/   (req/res, códigos HTTP)
-    → services/      (lógica de negocio)
-    → providers/     (acceso a BD y utilidades)
-    → models/        (Sequelize + asociaciones)
+HTTP → routes → middlewares → controllers → services → providers → models
 ```
 
-El punto de entrada es `index.js`, que autentica la conexión a PostgreSQL, arranca los servicios programados y levanta la app definida en `src/app.js`.
+Entrada: `index.js` (conexión a BD, jobs, listen). App Express: `src/app.js`.
 
 ---
 
-## Requisitos previos
+## Arranque rápido
 
-- **Node.js** 18+ (recomendado LTS)
-- **npm**
-- Instancia de **PostgreSQL** accesible (local o en la nube; la configuración actual usa **SSL**)
-- Cuenta de **Cloudinary** con cloud name, API key y API secret
-
----
-
-## Instalación y configuración
+Requisitos: Node.js 18+, PostgreSQL, cuenta Cloudinary.
 
 ```bash
-# Clonar el repositorio y entrar al directorio
 cd Padel-Booking-Backend
-
-# Instalar dependencias
 npm install
-
-# Crear archivo de entorno (ver sección siguiente)
-# Copiar y completar .env en la raíz del proyecto
-
-# Ejecutar migraciones (requiere DATABASE_URL configurada)
+# Crear .env (ver abajo)
 npx sequelize-cli db:migrate
-
-# Arrancar en desarrollo (nodemon)
-npm start
-
-# Arrancar en producción
-npm run start-prod
+npm start          # desarrollo (nodemon) → puerto 3000
+npm run start-prod # producción
 ```
 
-Por defecto el servidor escucha en el puerto definido en `PORT` o **3000**.
+Health check: `GET /` → `Hello World!`  
+Docs locales: [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
 
----
-
-## Variables de entorno
-
-Crear un archivo `.env` en la raíz (está en `.gitignore`). Variables utilizadas en el código:
+### Variables de entorno
 
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
-| `DATABASE_URL` | Sí | URL de conexión PostgreSQL (ej. `postgres://user:pass@host:5432/dbname`) |
-| `JWT_SECRET` | Recomendada | Secreto para firmar JWT. Si no se define, se usa un valor por defecto **no seguro para producción**. |
-| `PORT` | No | Puerto del servidor (default: `3000`) |
-| `API_URL` | No | URL base para Swagger (default: `http://localhost:3000`) |
-| `CLOUDINARY_CLOUD_NAME` | Sí (imágenes) | Cloud name de la cuenta Cloudinary |
-| `CLOUDINARY_API_KEY` | Sí (imágenes) | API key de Cloudinary |
-| `CLOUDINARY_API_SECRET` | Sí (imágenes) | API secret de Cloudinary |
-
-**Ejemplo de `.env`:**
+| `DATABASE_URL` | Sí | Conexión PostgreSQL (SSL habilitado) |
+| `JWT_SECRET` | Sí en prod | Secreto para firmar tokens |
+| `PORT` | No | Default `3000` |
+| `API_URL` | No | Base URL para Swagger |
+| `FRONTEND_URL` | No | Orígenes CORS extra (separados por coma) |
+| `CLOUDINARY_CLOUD_NAME` | Sí (imágenes) | Cloudinary |
+| `CLOUDINARY_API_KEY` | Sí (imágenes) | Cloudinary |
+| `CLOUDINARY_API_SECRET` | Sí (imágenes) | Cloudinary |
 
 ```env
 DATABASE_URL=postgres://usuario:password@localhost:5432/padel_booking
 JWT_SECRET=tu_secreto_largo_y_aleatorio
 PORT=3000
 API_URL=http://localhost:3000
+FRONTEND_URL=https://otro-frontend.ejemplo.com
 CLOUDINARY_CLOUD_NAME=tu_cloud_name
 CLOUDINARY_API_KEY=tu_api_key
 CLOUDINARY_API_SECRET=tu_api_secret
 ```
 
-> La conexión en `src/config/database.js` y `config/config.js` exige SSL (`rejectUnauthorized: false`), típico de proveedores como Railway, Render o Supabase.
+### CORS
+
+Orígenes permitidos por defecto:
+
+- `http://localhost:4200`
+- `https://padel-booking-frontend-navy.vercel.app`
+
+Podés sumar más con `FRONTEND_URL`.
 
 ---
 
-## Base de datos y migraciones
+## Modelo de datos (resumen)
 
-Las migraciones están en `migrations/` y crean/actualizan, en orden:
-
-1. `Users`
-2. `Clubs`
-3. `Courts`
-4. `CourtSchedules`
-5. `Bookings`
-6. `Images`
-7. Columna `cloudinaryPublicId` en `Images`
-8. Ajuste de FKs de `Images` con `ON DELETE CASCADE`
-
-**Comandos útiles (sequelize-cli):**
-
-```bash
-# Aplicar migraciones
-npx sequelize-cli db:migrate
-
-# Revertir la última migración
-npx sequelize-cli db:migrate:undo
-
-# Revertir todas
-npx sequelize-cli db:migrate:undo:all
+```
+User 1 ──< Club 1 ──< Court 1 ──< CourtSchedule
+  │              │         │
+  │              │         └──< Image (court)
+  │              └──< Image (club)
+  └──< Booking >── Court, CourtSchedule, Club
 ```
 
-La configuración de Sequelize CLI está en `config/config.js` (entorno `development` usando `DATABASE_URL`).
+- **Booking** `status`: `pending` | `confirmed` | `cancelled` | `completed`
+- **CourtSchedule** `status`: `available` | `booked` | `maintenance`
+- Al reservar, el horario pasa a `booked`. Un job cada **30 min** completa reservas vencidas y vuelve el horario a `available`.
 
-Los modelos Sequelize viven en `src/models/` y las asociaciones se registran automáticamente en `src/models/index.js`.
-
----
-
-## Ejecución del servidor
-
-| Script | Comando | Descripción |
-|--------|---------|-------------|
-| Desarrollo | `npm start` | `nodemon index.js` — recarga al guardar cambios |
-| Producción | `npm run start-prod` | `node index.js` |
-
-Al iniciar correctamente verás en consola:
-
-- Confirmación de conexión a la base de datos.
-- Inicio del job de estados de horarios (cada 30 minutos).
-- Mensaje con el puerto en escucha.
-
-**Health check simple:** `GET /` → respuesta `Hello World!`
-
-En producción: [https://padel-booking-backend.onrender.com/](https://padel-booking-backend.onrender.com/)
+Detalle de tablas y migraciones: carpeta `migrations/` y modelos en `src/models/`.
 
 ---
 
-## Documentación interactiva (Swagger)
+## API
 
-Con el servidor en marcha:
+Prefijos principales: `/auth`, `/users`, `/clubs`, `/courts`, `/schedules`, `/bookings`, `/images`.
 
-- **Local:** [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
-- **Producción:** [https://padel-booking-backend.onrender.com/api-docs](https://padel-booking-backend.onrender.com/api-docs)
-
-La especificación OpenAPI se genera desde comentarios `@swagger` en `src/routes/*.js`. El servidor documentado usa `API_URL` o `http://localhost:3000`.
-
-> En varios endpoints Swagger referencia `bearerAuth`; asegúrate de enviar el token en las peticiones protegidas (ver siguiente sección).
-
----
-
-## Autenticación y autorización
-
-### Registro
-
-`POST /auth/register` — Crea usuario con rol `client` por defecto. Campos validados con Joi:
-
-- `name`, `last_name`, `email`, `password` (mín. 6 caracteres)
-- `position`: `backhand` | `forehand` | `both`
-- `level`: entero 1–8
-- `gender`: `male` | `female` | `unspecified`
-
-Respuesta exitosa (`201`): mensaje, **token JWT** y datos del usuario.
-
-### Login
-
-`POST /auth/login` — Body: `email`, `password`.
-
-- Protegido con **rate limit**: máximo **5 intentos cada 15 minutos** por IP.
-- Respuesta (`200`): `{ success, message, token, user: { id, name, role } }`.
-
-### Uso del token
-
-En rutas protegidas, enviar cabecera:
+El contrato completo (parámetros, bodies, respuestas) está en **Swagger** (`/api-docs`). En rutas protegidas:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-El middleware `authMiddleware.js` decodifica el payload en `req.user` (`id`, `name`, `role`, etc.). El token expira en **2 horas**.
+Reglas clave al reservar:
 
-### Reglas de permisos (resumen)
-
-| Recurso | Cliente (`client`) | Admin / propietario (`admin`) |
-|---------|-------------------|-------------------------------|
-| Perfil propio | Ver/editar solo su `id` | Igual |
-| Listado de usuarios | Con JWT | Con JWT |
-| Club `/clubs/me` | No (403) | Sí, si tiene club asociado |
-| Crear club | Con JWT | Con JWT |
-| Canchas / horarios / imágenes del club | Según ownership del club | Solo recursos de **su** club |
-| Reservas | Ver y modificar las propias | Ver/modificar reservas de **su** club |
-| Listar clubes públicos | Sin JWT en `GET /clubs` | — |
-
-Los middlewares relevantes están en:
-
-- `src/middlewares/authMiddleware.js` — JWT
-- `src/middlewares/userCheckMdw.js` — propiedad del perfil
-- `src/middlewares/adminCheckMdw.js` — propiedad de club, cancha, horario, imagen
-- `src/middlewares/bookingCheckMdw.js` — propiedad de reserva o admin del club
+- El horario no puede estar `booked` ni en `maintenance`.
+- No puede haber otra reserva `pending`/`confirmed` para el mismo horario y fecha.
+- Login: máximo 5 intentos cada 15 minutos por IP.
 
 ---
 
-## Modelo de datos
+## Decisiones técnicas
 
-### Diagrama de relaciones (simplificado)
-
-```
-User 1 ──< Club 1 ──< Court 1 ──< CourtSchedule
-  │              │         │
-  │              │         └──< Image (type: court)
-  │              └──< Image (type: club)
-  │
-  └──< Booking >── Court, CourtSchedule, Club
-```
-
-### Entidades
-
-#### User (`Users`)
-
-| Campo | Tipo | Notas |
-|-------|------|--------|
-| `id` | INTEGER | PK |
-| `name`, `last_name` | STRING | |
-| `email` | STRING | Único |
-| `password` | STRING | Hash bcrypt |
-| `role` | ENUM | `admin`, `client` (default: `client`) |
-| `position` | ENUM | `backhand`, `forehand`, `both` |
-| `level` | INTEGER | 1–8 |
-| `gender` | ENUM | `male`, `female`, `unspecified` |
-
-Sin timestamps en BD.
-
-#### Club (`Clubs`)
-
-| Campo | Tipo |
-|-------|------|
-| `name`, `address`, `phone`, `email` | STRING |
-| `UserId` | INTEGER → propietario |
-
-#### Court (`Courts`)
-
-| Campo | Tipo |
-|-------|------|
-| `name` | STRING |
-| `wall_type` | `acrylic` \| `cement` |
-| `court_type` | `indoor` \| `outdoor` |
-| `available` | BOOLEAN (default: true) |
-| `clubId` | INTEGER → Club |
-
-#### CourtSchedule (`CourtSchedules`)
-
-| Campo | Tipo |
-|-------|------|
-| `day_of_week` | `monday` … `sunday` |
-| `start_time`, `end_time` | TIME |
-| `courtId` | INTEGER |
-| `status` | `available` \| `booked` \| `maintenance` |
-
-#### Booking (`Bookings`)
-
-| Campo | Tipo |
-|-------|------|
-| `date` | DATEONLY |
-| `userId`, `courtId`, `courtScheduleId`, `clubId` | INTEGER |
-| `status` | `pending` \| `confirmed` \| `cancelled` \| `completed` |
-| `createdAt`, `updatedAt` | timestamps Sequelize |
-
-Al crear una reserva, el horario pasa a `booked`. Un job periódico marca reservas terminadas como `completed` y libera el horario (`available`).
-
-#### Image (`Images`)
-
-| Campo | Tipo | Notas |
-|-------|------|--------|
-| `url` | STRING | URL segura de Cloudinary (`secure_url`) |
-| `cloudinaryPublicId` | STRING | `public_id` del asset en Cloudinary (para borrar/actualizar) |
-| `type` | `court` \| `club` | |
-| `CourtId`, `ClubId` | INTEGER | Según tipo (nullable) |
-
-Al eliminar una imagen (o su club/cancha), un hook `beforeDestroy` intenta borrar también el asset en Cloudinary.
+- Capas separadas para aislar HTTP, validación, negocio y acceso a datos.
+- Imágenes solo en Cloudinary (Multer en memoria); al borrar entidad se limpia el asset.
+- Ownership por middlewares (`adminCheckMdw`, `bookingCheckMdw`), no solo por rol genérico.
+- Job in-process cada 30 min (simple para el alcance del proyecto; en escala iría a un worker/cola).
 
 ---
 
-## API — Endpoints
-
-Prefijo base: raíz del servidor (ej. `http://localhost:3000` o [producción](https://padel-booking-backend.onrender.com/)).
-
-### Auth — `/auth`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| POST | `/auth/login` | No | Inicio de sesión (rate limited) |
-| POST | `/auth/register` | No | Registro de usuario |
-
-### Users — `/users`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/users` | JWT | Listar usuarios (filtros query opcionales) |
-| GET | `/users/:id` | JWT | Usuario por ID |
-| PATCH | `/users/:id` | JWT + propietario | Actualizar perfil propio |
-
-### Clubs — `/clubs`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/clubs` | No | Listar clubes (`name`, `location`, `id` en query) |
-| GET | `/clubs/dropdown` | No | Lista `{ id, name }` para selectores |
-| GET | `/clubs/me` | JWT + `admin` | Club del usuario autenticado |
-| GET | `/clubs/:id` | JWT | Detalle de un club |
-| POST | `/clubs` | JWT | Crear club (`multipart/form-data`, campo `images`) |
-
-### Courts — `/courts`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/courts` | JWT + ownership | Listar canchas (filtros: `name`, `wall_type`, `court_type`, `clubId`) |
-| GET | `/courts/available` | JWT | Canchas con horarios disponibles (filtros de día/hora/club/tipo) |
-| GET | `/courts/:id` | JWT | Cancha por ID |
-| POST | `/courts` | JWT + dueño del club | Crear una o varias canchas (`multipart`, imágenes opcionales) |
-| PATCH | `/courts/:id` | JWT + ownership | Editar cancha |
-| DELETE | `/courts/:id` | JWT + ownership | Eliminar cancha |
-
-### Schedules — `/schedules`
-
-> En Swagger algunos comentarios dicen `/courts-schedules`; la ruta montada en la app es **`/schedules`**.
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/schedules` | No | Todos los horarios |
-| POST | `/schedules/:id` | JWT + ownership | Crear horarios para la cancha `:id` (body: array `schedules`) |
-| DELETE | `/schedules/:id` | JWT + ownership | Eliminar horario por ID del schedule |
-
-**Ejemplo de cuerpo para crear horarios:**
-
-```json
-{
-  "schedules": [
-    {
-      "day_of_week": "monday",
-      "start_time": "09:00",
-      "end_time": "10:00"
-    }
-  ]
-}
-```
-
-### Bookings — `/bookings`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/bookings` | JWT | Listar reservas (`status` opcional). Admin: reservas de su club. Client: las propias. |
-| POST | `/bookings` | JWT | Crear reserva |
-| PATCH | `/bookings/:id` | JWT + ownership/admin club | Actualizar estado |
-| DELETE | `/bookings/:id` | JWT + ownership/admin club | Eliminar reserva |
-
-**Cuerpo crear reserva (`POST /bookings`):**
-
-```json
-{
-  "courtId": 1,
-  "courtScheduleId": 1,
-  "clubId": 1,
-  "date": "2025-06-15",
-  "status": "pending"
-}
-```
-
-Estados válidos: `pending`, `confirmed`, `cancelled`, `completed`.
-
-**Reglas de negocio al reservar:**
-
-- El horario debe existir y no estar `booked` ni en `maintenance`.
-- No puede haber otra reserva `pending` o `confirmed` para el mismo horario y fecha.
-
-### Images — `/images`
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| GET | `/images` | No | Listar todas las imágenes |
-| PATCH | `/images/:id` | JWT + ownership | Actualizar imagen (`multipart/form-data`: `image`, `type`, `clubId`/`courtId`) |
-
-Las URLs de las imágenes apuntan a Cloudinary (CDN); no se sirven desde el propio servidor.
-
-### CORS
-
-Configurado en `src/app.js` para:
-
-- **Origen:** `http://localhost:4200`
-- **Métodos:** GET, POST, PUT, PATCH, DELETE
-
-Para otro frontend (por ejemplo el deploy en Vercel), ajustar el `origin` en ese archivo o externalizarlo a variable de entorno.
-
----
-
-## Tareas en segundo plano
-
-Definidas en `index.js` al arrancar el servidor:
-
-### Actualización de estados de reservas (`courtScheduleStatus.service.js`)
-
-- **Frecuencia:** cada **30 minutos** (y una ejecución al inicio).
-- **Acción:** busca reservas cuya fecha/hora de fin ya pasó; pone el `CourtSchedule` en `available` y el `Booking` en `completed`.
-
----
-
-## Imágenes y Cloudinary
-
-Las imágenes **no se guardan en disco local**. El flujo es:
-
-1. **Multer** (`uploadMemory`) recibe el archivo en memoria (`multipart/form-data`).
-2. El servicio (`src/services/images.services.js`) sube el buffer a **Cloudinary** con `upload_stream`.
-3. En BD se guardan `url` (`secure_url`) y `cloudinaryPublicId` (`public_id`).
-4. Al actualizar o eliminar, se borra el asset anterior en Cloudinary (y hooks en Club/Court/Image cubren el borrado en cascada).
-
-### Configuración
-
-- Cliente: `src/config/cloudinary.js` (usa las variables `CLOUDINARY_*`).
-- Carpetas en Cloudinary:
-  - Clubes → `padel/clubs`
-  - Canchas → `padel/courts`
-
-### Rutas que suben imágenes
-
-- `POST /clubs` — imágenes del club
-- `POST /courts` — imágenes opcionales de canchas
-- `PATCH /images/:id` — reemplazo de una imagen existente
-
-Si la subida a Cloudinary falla o falla la persistencia en BD, el servicio intenta limpiar el asset recién creado para no dejar basura en la nube.
-
----
-
-## Estructura de carpetas
+## Estructura
 
 ```
 Padel-Booking-Backend/
-├── config/
-│   └── config.js              # Config Sequelize CLI
-├── migrations/                # Migraciones de BD
-├── index.js                   # Entrada: BD + jobs + listen
-├── package.json
+├── config/config.js       # Sequelize CLI
+├── migrations/
+├── index.js
 └── src/
-    ├── app.js                 # Express, CORS, rutas, Swagger
-    ├── config/
-    │   ├── cloudinary.js      # Cliente Cloudinary
-    │   ├── database.js
-    │   ├── multer.js          # Memoria (y disco legacy no usado en el flujo actual)
-    │   ├── passport.js
-    │   └── swagger.js
+    ├── app.js
+    ├── config/            # DB, Cloudinary, Multer, Passport, Swagger
     ├── controllers/
     ├── middlewares/
     ├── models/
-    ├── providers/             # Acceso a datos
-    ├── routes/                # Rutas + Swagger JSDoc
-    ├── schemas/               # Esquemas Joi
-    ├── services/              # Lógica de negocio + jobs
+    ├── providers/
+    ├── routes/            # + anotaciones Swagger
+    ├── schemas/           # Joi
+    ├── services/
     └── utils/
 ```
 
 ---
 
-## Convenciones y buenas prácticas
-
-- Cada función exportada debe documentarse con **bloque JSDoc** (convención del repositorio).
-- Validación de entrada centralizada con **Joi** (`validatorJoiMdw.js`).
-- Respuestas de error suelen incluir `message` y, en muchos casos, `error` con código simbólico (`FORBIDDEN_ACCESS`, `EMAIL_DUPLICATE`, etc.).
-- No commitear `.env` ni secretos reales (`JWT_SECRET`, `CLOUDINARY_API_SECRET`, etc.).
-- En **producción**: definir `JWT_SECRET` fuerte, revisar CORS (incluir el origen del frontend en Vercel) y mantener las credenciales de Cloudinary solo en variables de entorno del host (Render).
-
----
-
-## Scripts npm
+## Scripts
 
 | Script | Acción |
 |--------|--------|
 | `npm start` | Desarrollo con nodemon |
 | `npm run start-prod` | Producción con node |
-| `npm test` | No configurado (placeholder) |
 
----
-
-## Licencia
-
-ISC (según `package.json`).
-
----
-
-## Soporte y ampliación
-
-Para detalle de parámetros, cuerpos y respuestas de cada endpoint, usar **Swagger** en `/api-docs` (local o [producción](https://padel-booking-backend.onrender.com/api-docs)). Para cambios en el esquema de BD, crear nuevas migraciones con `sequelize-cli` y mantener modelos en `src/models/` alineados con las tablas.
+Licencia: ISC.
