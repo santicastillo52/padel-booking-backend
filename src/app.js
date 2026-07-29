@@ -18,18 +18,9 @@ const app = express();
 // Middleware
 app.use(express.json());
 app.use(passport.initialize());
-
-const allowedOrigins = [
-  'http://localhost:4200',
-  'https://padel-booking-frontend-navy.vercel.app',
-  ...(process.env.FRONTEND_URL
-    ? process.env.FRONTEND_URL.split(',').map((url) => url.trim()).filter(Boolean)
-    : []),
-];
-
 app.use(cors({
-  origin: allowedOrigins,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  origin: 'https://padel-booking-frontend-navy.vercel.app',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 }));
 app.use('/api-docs',swaggerUI.serve, swaggerUI.setup(specs));
 
